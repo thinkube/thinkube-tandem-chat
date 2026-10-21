@@ -12,7 +12,7 @@ export interface SessionRecord {
 	label: string;
 	/** The folder the agent works in, fixed when the chat starts. */
 	cwd: string;
-	/** The agent's own session: Pi's session file, opencode's session id. */
+	/** The agent's own session: Pi's session file. */
 	agentSession?: string;
 	created: number;
 	lastStarted?: number;
@@ -25,6 +25,18 @@ export interface HistoryTurn {
 	response: string;
 }
 
+/** A model the agent can call, offered in the chat panel's model picker. */
+export interface AgentModel {
+	/** The id the agent knows the model by. */
+	id: string;
+	name: string;
+	/** The model a new chat starts with. */
+	isDefault: boolean;
+	contextWindow: number;
+	maxOutput: number;
+	imageInput: boolean;
+}
+
 /** A coding agent offered as its own kind of chat in VS Code's chat panel. */
 export interface Agent {
 	/** The chat session type, declared in package.json `chatSessions`. */
@@ -34,10 +46,16 @@ export interface Agent {
 	run(record: SessionRecord, request: vscode.ChatRequest, stream: vscode.ChatResponseStream, token: vscode.CancellationToken): Promise<void>;
 	/** The exchanges of the agent's session, read from the agent. */
 	history(record: SessionRecord): Promise<HistoryTurn[]>;
+	/**
+	 * The models the agent can call, for the chat panel's model picker; the
+	 * one picked reaches run() as request.model.
+	 */
+	models(): Promise<AgentModel[]>;
 	dispose(): void;
 }
 
 const TITLE_LENGTH = 60;
+const MODELS_REFRESH_MS = 30_000;
 
 function title(prompt: string): string {
 	const line = prompt.trim().split("\n")[0];
@@ -69,11 +87,11 @@ class SessionStore {
 /**
  * Registers an agent as a chat session type: VS Code lists it beside "Local"
  * in the chat panel, lists its chats, and sends what the user types in one of
- * its chats to the agent. The agent gets one model entry that only its own
- * chats show; VS Code passes a request on only with a model it can resolve,
- * and the agent's own configuration chooses the model it calls.
+ * its chats to the agent. VS Code passes a request on only with a model it
+ * can resolve: the agent gets an entry per model, which only its own chats
+ * show, and the picked one reaches the agent.
  */
-export function registerAgent(context: vscode.ExtensionContext, agent: Agent): void {
+export function registerAgent(context: vscode.ExtensionContext, agent: Agent, log: vscode.LogOutputChannel): void {
 	const store = new SessionStore(context.globalState, agent.type);
 	const icon = new vscode.ThemeIcon("hubot");
 
@@ -138,27 +156,53 @@ export function registerAgent(context: vscode.ExtensionContext, agent: Agent): v
 		},
 	};
 
-	const model: vscode.LanguageModelChatInformation = {
-		id: agent.type,
-		name: agent.name,
+	const toEntry = (m: AgentModel): vscode.LanguageModelChatInformation => ({
+		id: m.id,
+		name: m.name,
 		family: agent.type,
 		version: "1",
-		tooltip: `${agent.name} calls the model set in its own configuration.`,
-		maxInputTokens: 0,
-		maxOutputTokens: 0,
-		capabilities: { toolCalling: true, imageInput: true },
+		tooltip: `${agent.name} calls ${m.name}.`,
+		maxInputTokens: m.contextWindow,
+		maxOutputTokens: m.maxOutput,
+		capabilities: { toolCalling: true, imageInput: m.imageInput },
 		targetChatSessionType: agent.type,
 		isUserSelectable: true,
-		isDefault: true,
-	};
+		isDefault: m.isDefault,
+	});
+	let entries: vscode.LanguageModelChatInformation[] = [];
+
 	// VS Code reads a vendor's models when the vendor reports a change (or when
 	// something asks for every vendor's models, which the Copilot extension
 	// does; without it, nothing would). Firing once after registration makes
-	// the entry known as soon as the extension starts.
+	// the entries known as soon as the extension starts.
 	const modelsChanged = new vscode.EventEmitter<void>();
+
+	// The agent's models follow what the gateway serves: they are read again
+	// every MODELS_REFRESH_MS. A failed read keeps the last list and is logged,
+	// and shown once until a read succeeds again.
+	let readFailed = false;
+	const refreshModels = async (): Promise<void> => {
+		try {
+			const next = (await agent.models()).map(toEntry);
+			readFailed = false;
+			if (JSON.stringify(next) !== JSON.stringify(entries)) {
+				entries = next;
+				log.info(`${agent.name}: models ${next.map((e) => e.id + (e.isDefault ? " (default)" : "")).join(", ") || "none"}`);
+				modelsChanged.fire();
+			}
+		} catch (error) {
+			const message = `${agent.name} could not read its models: ${error instanceof Error ? error.message : String(error)}`;
+			log.error(message);
+			if (!readFailed) vscode.window.showErrorMessage(message);
+			readFailed = true;
+		}
+	};
+	const timer = setInterval(() => void refreshModels(), MODELS_REFRESH_MS);
+	void refreshModels();
+
 	const models: vscode.LanguageModelChatProvider = {
 		onDidChangeLanguageModelChatInformation: modelsChanged.event,
-		provideLanguageModelChatInformation: () => [model],
+		provideLanguageModelChatInformation: () => entries,
 		provideLanguageModelChatResponse: () => {
 			throw new Error(`${agent.name} is an agent, not a model: talk to it in its own chats.`);
 		},
@@ -171,6 +215,7 @@ export function registerAgent(context: vscode.ExtensionContext, agent: Agent): v
 		vscode.chat.registerChatSessionContentProvider(agent.type, content, participant),
 		vscode.lm.registerLanguageModelChatProvider(agent.type, models),
 		modelsChanged,
+		{ dispose: () => clearInterval(timer) },
 		agent,
 	);
 	modelsChanged.fire();

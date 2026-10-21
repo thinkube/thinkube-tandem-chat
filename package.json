@@ -1,9 +1,9 @@
 {
   "name": "thinkube-tandem-chat",
   "displayName": "Thinkube Tandem Chat",
-  "description": "Tandem chats in VS Code's chat panel: Pi and opencode with Thinkube's models, MCP servers and operating rules",
+  "description": "Tandem chats in VS Code's chat panel: Pi with Thinkube's models, MCP servers and operating rules",
   "publisher": "thinkube",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "license": "Apache-2.0",
   "icon": "icon.png",
   "repository": {
@@ -47,35 +47,12 @@
           "supportsImageAttachments": true
         },
         "canDelegate": true
-      },
-      {
-        "type": "thinkube-opencode",
-        "name": "tandem-opencode",
-        "displayName": "Tandem (powered by opencode)",
-        "icon": "$(hubot)",
-        "description": "Tandem (powered by opencode) with Thinkube models, MCP servers and operating rules.",
-        "welcomeTitle": "Tandem (powered by opencode)",
-        "welcomeMessage": "With Thinkube models, MCP servers and operating rules",
-        "inputPlaceholder": "Ask Tandem",
-        "order": 2,
-        "requiresCustomModels": true,
-        "requiresCopilotSignIn": false,
-        "capabilities": {
-          "supportsFileAttachments": true,
-          "supportsImageAttachments": true
-        },
-        "canDelegate": true
       }
     ],
     "languageModelChatProviders": [
       {
         "vendor": "thinkube-pi",
         "displayName": "Tandem (powered by Pi)",
-        "when": "false"
-      },
-      {
-        "vendor": "thinkube-opencode",
-        "displayName": "Tandem (powered by opencode)",
         "when": "false"
       }
     ]
@@ -85,10 +62,7 @@
     "compile": "tsc -p ./",
     "deploy": "scripts/deploy.sh"
   },
-  "dependencies": {
-    "@agentclientprotocol/sdk": "0.21.0",
-    "zod": "4.1.8"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/vscode": "^1.100.0",

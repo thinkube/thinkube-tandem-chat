@@ -3,7 +3,7 @@
   "displayName": "Thinkube Tandem Chat",
   "description": "Tandem chats in VS Code's chat panel: Pi with Thinkube's models, MCP servers and operating rules",
   "publisher": "thinkube",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "license": "Apache-2.0",
   "icon": "icon.png",
   "repository": {

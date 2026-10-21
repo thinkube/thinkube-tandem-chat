@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as vscode from "vscode";
-import { opencode } from "./opencode";
 import { createPi } from "./pi";
 import { registerAgent } from "./sessions";
 
@@ -50,7 +49,6 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(log);
 	const pi = createPi(context.extensionPath);
 	registerAgent(context, pi, log);
-	registerAgent(context, opencode, log);
 	openTandemAtStartup(context, log, pi.type);
 }
 

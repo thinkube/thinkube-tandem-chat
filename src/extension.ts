@@ -49,8 +49,8 @@ export function activate(context: vscode.ExtensionContext): void {
 	const log = vscode.window.createOutputChannel("Thinkube Tandem Chat", { log: true });
 	context.subscriptions.push(log);
 	const pi = createPi(context.extensionPath);
-	registerAgent(context, pi);
-	registerAgent(context, opencode);
+	registerAgent(context, pi, log);
+	registerAgent(context, opencode, log);
 	openTandemAtStartup(context, log, pi.type);
 }
 

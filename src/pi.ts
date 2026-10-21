@@ -5,7 +5,7 @@ import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { readJsonl } from "./jsonl";
-import { Agent, HistoryTurn, SessionRecord } from "./sessions";
+import { Agent, AgentModel, HistoryTurn, SessionRecord } from "./sessions";
 import { Turn, errorText, promptImages, promptText } from "./turn";
 
 const ALLOW = "allow";
@@ -30,6 +30,8 @@ class PiProcess {
 	private nextId = 0;
 	private stderr = "";
 	exited: string | undefined;
+	/** The model this process last set with set_model. */
+	model: string | undefined;
 
 	constructor(readonly cwd: string, beforeEdit: string) {
 		this.child = spawn("pi", ["--mode", "rpc", "--extension", beforeEdit], { cwd, env: process.env });
@@ -205,6 +207,12 @@ async function run(
 	token: vscode.CancellationToken,
 ): Promise<void> {
 	const pi = await processFor(record, beforeEdit);
+	// The model picked in the chat panel; Pi keeps it in the chat's session.
+	const picked = request.model?.id;
+	if (picked && picked !== pi.model) {
+		await pi.command("set_model", { provider: PROVIDER, modelId: picked });
+		pi.model = picked;
+	}
 	const turn = new Turn(stream, record.cwd);
 	let failure: string | undefined;
 	let stopListening = () => {};
@@ -270,6 +278,67 @@ async function run(
 	}
 }
 
+/** The Pi provider of the LLM gateway's models, Thinkube's thinkube-models extension of Pi. */
+const PROVIDER = "thinkube";
+
+interface GatewayModel {
+	id: string;
+	root: string;
+	thinkube: {
+		name: string;
+		state: string;
+		aliases: string[];
+		capabilities: string[];
+		default_agent: boolean;
+		input: string[];
+		context_window: number | null;
+		context_length: number | null;
+		max_output: number | null;
+	};
+}
+
+/**
+ * The models Pi's thinkube provider offers, read from the LLM gateway by the
+ * rule of Pi's thinkube-models extension: the served models marked agent,
+ * and the agent default even when it is not loaded, each by its first alias.
+ */
+async function piModels(): Promise<AgentModel[]> {
+	const gateway = process.env.LLM_GATEWAY_URL;
+	const token = process.env.THINKUBE_API_TOKEN;
+	if (!gateway || !token) {
+		throw new Error("LLM_GATEWAY_URL and THINKUBE_API_TOKEN must be set; Thinkube IDE sets both");
+	}
+	const url = `${gateway.replace(/\/$/, "")}/v1/models`;
+	const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+	if (!resp.ok) {
+		throw new Error(`the LLM gateway answered HTTP ${resp.status} for ${url}`);
+	}
+	const entries = ((await resp.json()) as { data: GatewayModel[] }).data;
+	return entries
+		.filter((m) => {
+			const t = m.thinkube;
+			return t.capabilities.includes("agent")
+				&& (t.state === "available" || t.default_agent)
+				&& m.id === (t.aliases[0] ?? m.root);
+		})
+		.map((m) => {
+			// A model not served has no served context; its catalog length stands
+			// for it until it is, as no call to it can succeed before then.
+			const contextWindow = m.thinkube.context_window ?? m.thinkube.context_length;
+			if (contextWindow === null || m.thinkube.max_output === null) {
+				throw new Error(`model ${m.root} is marked agent in the catalog but has no context_length or max_output`);
+			}
+			return {
+				id: m.id,
+				name: m.thinkube.name,
+				isDefault: m.thinkube.default_agent,
+				contextWindow,
+				maxOutput: m.thinkube.max_output,
+				imageInput: m.thinkube.input.includes("image"),
+			};
+		});
+}
+
 /** Pi as a chat session type; extensionPath is this extension's folder. */
 export function createPi(extensionPath: string): Agent {
 	const beforeEdit = path.join(extensionPath, "pi", "before-edit.ts");
@@ -281,6 +350,7 @@ export function createPi(extensionPath: string): Agent {
 			const data = await (await processFor(record, beforeEdit)).command("get_messages");
 			return exchanges(data?.messages ?? []);
 		},
+		models: piModels,
 		dispose() {
 			for (const process of processes.values()) {
 				process.stop();
